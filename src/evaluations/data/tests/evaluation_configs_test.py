@@ -20,7 +20,9 @@ import numpy as np
 
 from wfa_cardinality_estimation_evaluation_framework.evaluations import configs
 from wfa_cardinality_estimation_evaluation_framework.evaluations.data import evaluation_configs
+from wfa_cardinality_estimation_evaluation_framework.evaluations.data.evaluation_configs import _stress_test_cardinality_global_dp
 from wfa_cardinality_estimation_evaluation_framework.evaluations.data.evaluation_configs import _complete_test_with_selected_parameters
+from wfa_cardinality_estimation_evaluation_framework.evaluations.data.evaluation_configs import GAUSSIAN_NOISE
 from wfa_cardinality_estimation_evaluation_framework.evaluations.data.evaluation_configs import GLOBAL_DP_STR
 from wfa_cardinality_estimation_evaluation_framework.evaluations.data.evaluation_configs import LOCAL_DP_STR
 from wfa_cardinality_estimation_evaluation_framework.evaluations.data.evaluation_configs import NO_GLOBAL_DP_STR
@@ -162,6 +164,24 @@ class EvaluationConfigTest(parameterized.TestCase):
     }
 
     self.assertEqual(result, expected)
+
+  @parameterized.parameters(
+      (100000, None, None, "geo_bloom_filter-100000_0.000020"
+      "-first_moment_geo-no_local_dp-no_global_dp"),
+      (250000, None, None, "geo_bloom_filter-250000_0.000008"
+      "-first_moment_geo-no_local_dp-no_global_dp"),
+      (250000, math.log(3), math.log(3), "geo_bloom_filter-"
+      "250000_0.000008-first_moment_geo-no_local_dp-no_global_dp"),
+      (250000, math.log(3), None, "geo_bloom_filter-"
+      "250000_0.000008-first_moment_geo-no_local_dp-no_global_dp"),
+      (250000, None, math.log(3), "geo_bloom_filter-250000_0.000008"
+      "-first_moment_geo-no_local_dp-no_global_dp"),
+  )
+  def test_geo_bloom_filter_first_moment_geo(self,
+      length, sketch_epsilon, estimate_epsilon, expected):
+    conf = evaluation_configs._geo_bloom_filter_first_moment_geo(
+        length, None, None)
+    self.assertEqual(conf.name, expected)
 
   def test_generate_configs_scenario_4b_set_sizes_correct(self):
     conf_list = evaluation_configs._generate_configs_scenario_4b(
@@ -327,6 +347,17 @@ class EvaluationConfigTest(parameterized.TestCase):
     for scenario_config in eval_configs.scenario_config_list:
       self.assertIsInstance(scenario_config, configs.ScenarioConfig)
 
+  def test_cardinality_global_dp_stress_test(self):
+    eval_configs = _stress_test_cardinality_global_dp(
+        universe_size=None, num_runs=1)
+    for scenario_config in eval_configs.scenario_config_list:
+      self.assertIsInstance(scenario_config, configs.ScenarioConfig)
+      gen = scenario_config.set_generator_factory(np.random.RandomState(0))
+      reach = float(scenario_config.name.split('-')[1].lstrip('reach:'))
+      set_ids_list = [set_ids for set_ids in gen]
+      self.assertLen(set_ids_list, 1)
+      self.assertLen(set_ids_list[0], reach)
+
   @parameterized.parameters(
       (LOCAL_DP_STR, None, NO_LOCAL_DP_STR),
       (GLOBAL_DP_STR, None, NO_GLOBAL_DP_STR),
@@ -340,6 +371,25 @@ class EvaluationConfigTest(parameterized.TestCase):
   def test_format_epsilon_correct(self, dp_type, epsilon, expected):
     self.assertEqual(evaluation_configs._format_epsilon(dp_type, epsilon),
                      expected)
+
+  @parameterized.parameters(
+      (LOCAL_DP_STR, None, None, None, None, NO_LOCAL_DP_STR),
+      (GLOBAL_DP_STR, None, None, None, None, NO_GLOBAL_DP_STR),
+      (LOCAL_DP_STR, math.log(3), None, None, None,
+       LOCAL_DP_STR + '_1.099,0.0000'),
+      (GLOBAL_DP_STR, math.log(3), 0.1, None, None,
+       GLOBAL_DP_STR + '_1.099,0.1000'),
+      (LOCAL_DP_STR, 1.09, 0.01, 3, None,
+       LOCAL_DP_STR + '_1.090,0.0100-budget_split-3'),
+      (GLOBAL_DP_STR, 3.055, 0.001, 5, GAUSSIAN_NOISE,
+       GLOBAL_DP_STR + '_3.055,0.0010-' + GAUSSIAN_NOISE + '-budget_split-5'),
+  )
+  def test_format_privacy_parameters_correct(
+    self, dp_type, epsilon, delta, num_queries, noise_type, expected):
+    self.assertEqual(evaluation_configs._format_privacy_parameters(
+      dp_type, epsilon=epsilon, delta=delta, num_queries=num_queries,
+      noise_type=noise_type, epsilon_decimals=3, delta_decimals=4),
+    expected)
 
   def test_construct_sketch_estimator_config_name_cardinality_estimator(self):
     name = evaluation_configs.construct_sketch_estimator_config_name(
@@ -401,6 +451,55 @@ class EvaluationConfigTest(parameterized.TestCase):
     for x, y in zip(estimated, expected):
       self.assertAlmostEqual(x, y)
 
+  def test_exp_bloom_filter_first_moment_exp_with_budget_split(self):
+    conf = evaluation_configs._exp_bloom_filter_first_moment_exp(
+        length=5, estimate_epsilon=0.5, estimate_delta=0.03,
+        noise_type=GAUSSIAN_NOISE, num_estimate_queries=25)
+    self.assertEqual(
+        conf.name,
+        'exp_bloom_filter-5_10-first_moment_exp-no_local_dp-global_dp_'
+        f'0.5000,0.0300000-gaussian_noise-budget_split-25')
+
+  def test_exp_bloom_filter_first_moment_exp(self):
+    conf = evaluation_configs._exp_bloom_filter_first_moment_exp(
+        length=8, sketch_epsilon=1, estimate_epsilon=2,
+        epsilon_decimals=2)
+    self.assertEqual(
+        conf.name,
+        'exp_bloom_filter-8_10-first_moment_exp-local_dp_1.00'
+        '-global_dp_2.00')
+
+  def test_meta_voc_for_exp_adbf(self):
+    conf = evaluation_configs._meta_voc_for_exp_adbf(
+        adbf_length=16,
+        adbf_decay_rate=2,
+        voc_length=4,
+        sketch_epsilon=1)
+    self.assertEqual(
+        conf.name,
+        'exp_bloom_filter-16_2-meta_voc_4-local_dp_1.0000-no_global_dp',
+        'Config name is not correct.')
+    exp_adbf = conf.sketch_factory(1)
+    self.assertLen(exp_adbf.sketch, 16)
+    self.assertEqual(conf.estimator.adbf_estimator._method, 'exp')
+    voc_sketch = conf.estimator.meta_sketch_factory(1)
+    self.assertLen(voc_sketch.stats, 4)
+
+  def test_meta_voc_for_bf(self):
+    conf = evaluation_configs._meta_voc_for_bf(
+        bf_length=16,
+        voc_length=4)
+    self.assertEqual(
+        conf.name,
+        'bloom_filter-16-meta_voc_4-no_local_dp-no_global_dp',
+        'Config name is not correct.')
+    bf = conf.sketch_factory(1)
+    self.assertLen(bf.sketch, 16)
+    bf.add(1)
+    self.assertAlmostEqual(conf.estimator([bf])[0], 1.03, delta=1.03 * 0.1)
+    voc_sketch = conf.estimator.meta_sketch_factory(1)
+    self.assertLen(voc_sketch.stats, 4)
+
   def test_get_estimator_configs_return_configs(self):
     expected_sketch_estimator_configs = [conf.name for conf in (
         evaluation_configs._generate_cardinality_estimator_configs())]
@@ -434,13 +533,44 @@ class EvaluationConfigTest(parameterized.TestCase):
 
   def test_stratiefied_sketch_exp_adbf(self):
     conf = evaluation_configs._stratiefied_sketch_exponential_adbf(
-        max_frequency=3, length=100, sketch_epsilon=1, global_epsilon=1)
+        max_frequency=3, length=100, sketch_epsilon=1, global_epsilon=1,
+        sketch_operator_type='expectation')
     self.assertEqual(conf.max_frequency, 3)
     self.assertEqual(
         conf.name,
         'stratified_sketch_exp_adbf-100_10'
         '-first_moment_estimator_exp_expectation'
         '-local_dp_1.0000-global_dp_1.0000-3')
+
+  def test_stratiefied_sketch_exp_adbf_sketch_operator(self):
+    for sketch_operator_type in (evaluation_configs.SKETCH_OPERATOR_EXPECTATION,
+                                 evaluation_configs.SKETCH_OPERATOR_BAYESIAN):
+      conf = evaluation_configs._stratiefied_sketch_exponential_adbf(
+          max_frequency=3, length=100, sketch_epsilon=1, global_epsilon=1,
+          sketch_operator_type=sketch_operator_type)
+      self.assertIn(sketch_operator_type, conf.name)
+
+    with self.assertRaises(ValueError):
+      _ = evaluation_configs._stratiefied_sketch_exponential_adbf(
+          max_frequency=3, length=100, sketch_epsilon=1, global_epsilon=1,
+          sketch_operator_type='other_type')
+
+  @parameterized.parameters(
+      (3, 100, 1, 1, 'stratified_sketch_geo_adbf-'
+      '100_0.020000-first_moment_estimator_geo_expectation-local_dp_1.0000-'
+      'global_dp_1.0000-3'),
+      (3, 4000, 1, None, 'stratified_sketch_geo_adbf-'
+      '4000_0.000500-first_moment_estimator_geo_expectation-local_dp_1.0000-'
+      'no_global_dp-3'),
+  )
+  def test_stratiefied_sketch_geo_adbf(
+    self, frequency, length, sketch_epsilon, global_epsilon, truth):
+    conf = evaluation_configs._stratiefied_sketch_geo_adbf(
+        frequency, length, sketch_epsilon, global_epsilon)
+    self.assertEqual(conf.max_frequency, frequency)
+    self.assertEqual(
+        conf.name,
+        truth)
 
 
 if __name__ == '__main__':
